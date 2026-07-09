@@ -1,0 +1,62 @@
+name: Update FHA Inspection Score Lookup
+
+on:
+  schedule:
+    # Runs every Monday at 13:00 UTC (~8am Central). HUD says the address
+    # file updates monthly and the scores file updates periodically, so a
+    # weekly check is more than enough -- adjust the cron if you want it
+    # more/less frequent.
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}   # lets you trigger a rebuild manually from the Actions tab
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install LibreOffice (for legacy .xls conversion)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-calc
+
+      - name: Install Python dependencies
+        run: pip install pandas openpyxl requests xlrd
+
+      - name: Run build script
+        run: python scripts/build.py
+
+      - name: Commit updated site if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "Auto-update lookup tool with latest HUD data"
+          git push
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
