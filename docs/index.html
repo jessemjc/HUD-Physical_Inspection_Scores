@@ -416,7 +416,7 @@ function lookupOne(rawInput) {
     if (SCORES[cleaned]) {
       const pair = mostRecentScore(SCORES[cleaned]);
       return {
-        status: "warn",
+        status: pair ? "ok" : "warn",
         fhaInput: original,
         propertyId: cleaned,
         matchedBy: "property_id",
@@ -503,10 +503,13 @@ function renderResult(r) {
            <span class="r-date">${escapeHtml(r.date || "")}</span>
          </div>`
       : "";
+    const tag = r.status === "ok"
+      ? `<span class="tag">Score found &middot; no address record</span>`
+      : `<span class="tag">No address record</span>`;
     div.innerHTML = `
       <div class="r-top">
         <span class="r-name">Property ID ${escapeHtml(r.propertyId)}</span>
-        <span class="tag">No address record</span>
+        ${tag}
       </div>
       <div class="r-note">${escapeHtml(r.note)}</div>
       ${scoreBlock}
