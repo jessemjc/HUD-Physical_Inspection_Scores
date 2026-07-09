@@ -81,7 +81,20 @@ def clean(s):
 
 
 def build_address_records(addr_df: pd.DataFrame) -> list:
+    """Returns [fha_clean, property_id, fha_raw, addr_name, addr_city, addr_state] rows.
+
+    addr_name/addr_city/addr_state are kept only as a fallback -- the scores
+    spreadsheet's Property Name/City/state_code are the primary source, since
+    that sheet also covers properties with no FHA-insured address record.
+    """
     addr_df["fha_clean"] = addr_df["fha_number"].apply(clean)
+
+    def strip_or_none(s):
+        if pd.isna(s):
+            return None
+        s = str(s).strip()
+        return s if s else None
+
     records = []
     for _, row in addr_df.iterrows():
         if not row["fha_clean"]:
@@ -89,29 +102,47 @@ def build_address_records(addr_df: pd.DataFrame) -> list:
         records.append([
             row["fha_clean"],
             row["property_id"] if pd.notna(row["property_id"]) else "",
-            row["property_name_text"].strip() if pd.notna(row["property_name_text"]) else "",
             row["fha_number"] if pd.notna(row["fha_number"]) else "",
-            row["city_name_text"].strip() if pd.notna(row["city_name_text"]) else "",
-            row["state_code"].strip() if pd.notna(row["state_code"]) else "",
+            strip_or_none(row["property_name_text"]),
+            strip_or_none(row["city_name_text"]),
+            strip_or_none(row["state_code"]),
         ])
     return records
 
 
 def build_score_records(scores_df: pd.DataFrame) -> dict:
+    """Returns property_id -> [name, city, state, [[s1,d1],[s2,d2],[s3,d3]]].
+
+    Name/city/state come straight from the HUD inspection scores spreadsheet
+    (Property Name / City / state_code), which is the primary source for
+    project info -- it covers properties even when they have no FHA-insured
+    address record.
+    """
+    def strip_or_none(s):
+        if pd.isna(s):
+            return None
+        s = str(s).strip()
+        return s if s else None
+
     records = {}
     for _, row in scores_df.iterrows():
         pid = row["REMS Property Id"]
         if pd.isna(pid):
             continue
-        entry = []
+        pairs = []
         for i in (1, 2, 3):
             sc = row.get(f"Inspection Score{i}")
             dt = row.get(f"Release Date {i}")
-            entry.append([
+            pairs.append([
                 sc if pd.notna(sc) else None,
                 dt if pd.notna(dt) else None,
             ])
-        records[pid] = entry
+        records[pid] = [
+            strip_or_none(row.get("Property Name")),
+            strip_or_none(row.get("City")),
+            strip_or_none(row.get("state_code")),
+            pairs,
+        ]
     return records
 
 
@@ -142,7 +173,10 @@ def main():
     if missing_addr:
         sys.exit(f"ERROR: address spreadsheet is missing expected columns: {missing_addr}")
 
-    required_score_cols = {"REMS Property Id", "Inspection Score1", "Release Date 1"}
+    required_score_cols = {
+        "REMS Property Id", "Inspection Score1", "Release Date 1",
+        "Property Name", "City", "state_code",
+    }
     missing_score = required_score_cols - set(scores_df.columns)
     if missing_score:
         sys.exit(f"ERROR: scores spreadsheet is missing expected columns: {missing_score}")
