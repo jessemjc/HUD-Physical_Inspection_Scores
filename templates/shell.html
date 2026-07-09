@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FHA Multifamily Inspection Score Lookup</title>
+<style>
+  :root{
+    --ink:#1b2430;
+    --ink-soft:#4a5568;
+    --paper:#f6f5f1;
+    --panel:#ffffff;
+    --line:#dcd8cc;
+    --brass:#8a6d3b;
+    --brass-dark:#6b5229;
+    --ok-bg:#eef4ec;
+    --ok-line:#8fae83;
+    --ok-text:#3c5a34;
+    --warn-bg:#fbf2e4;
+    --warn-line:#d9a441;
+    --warn-text:#7a5714;
+    --err-bg:#fbeceb;
+    --err-line:#c96a60;
+    --err-text:#8a3a32;
+    --mono: 'IBM Plex Mono', 'Courier New', monospace;
+    --serif: 'Source Serif Pro', Georgia, serif;
+    --sans: 'IBM Plex Sans', Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    padding:32px 16px 64px;
+    background-image:
+      linear-gradient(var(--paper), var(--paper)),
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.015) 0px, rgba(0,0,0,0.015) 1px, transparent 1px, transparent 3px);
+  }
+  .wrap{max-width:760px; margin:0 auto;}
+  header{
+    border-bottom:2px solid var(--ink);
+    padding-bottom:14px;
+    margin-bottom:28px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .kicker{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--brass-dark);
+    margin:0 0 6px;
+  }
+  h1{
+    font-family:var(--serif);
+    font-weight:600;
+    font-size:26px;
+    margin:0;
+    letter-spacing:-.01em;
+  }
+  .stamp{
+    font-family:var(--mono);
+    font-size:10.5px;
+    color:var(--ink-soft);
+    text-align:right;
+    line-height:1.5;
+    white-space:nowrap;
+  }
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:3px;
+    padding:22px;
+    margin-bottom:22px;
+    box-shadow:0 1px 2px rgba(0,0,0,0.03);
+  }
+  label{
+    display:block;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--ink-soft);
+    margin-bottom:8px;
+  }
+  textarea{
+    width:100%;
+    min-height:110px;
+    resize:vertical;
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:#fdfcf9;
+    padding:12px 14px;
+    font-family:var(--mono);
+    font-size:14px;
+    line-height:1.6;
+    color:var(--ink);
+  }
+  textarea:focus{outline:2px solid var(--brass); outline-offset:1px;}
+  input[type="text"]{
+    width:100%;
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:#fdfcf9;
+    padding:11px 14px;
+    font-family:var(--mono);
+    font-size:14px;
+    color:var(--ink);
+  }
+  input[type="text"]:focus{outline:2px solid var(--brass); outline-offset:1px;}
+  .name-panel{border-top:3px solid var(--brass);}
+  .hint{
+    font-size:12px;
+    color:var(--ink-soft);
+    margin-top:8px;
+    line-height:1.5;
+  }
+  .hint code{
+    background:#eeeae0;
+    padding:1px 5px;
+    border-radius:2px;
+    font-family:var(--mono);
+    font-size:11px;
+  }
+  .actions{
+    display:flex;
+    gap:10px;
+    margin-top:16px;
+    flex-wrap:wrap;
+  }
+  button{
+    font-family:var(--sans);
+    font-weight:600;
+    font-size:13.5px;
+    border-radius:2px;
+    padding:10px 20px;
+    cursor:pointer;
+    border:1px solid transparent;
+    transition:background .15s ease, color .15s ease, border-color .15s ease;
+  }
+  #lookupBtn{
+    background:var(--ink);
+    color:#fff;
+  }
+  #lookupBtn:hover{background:#000;}
+  #clearBtn{
+    background:transparent;
+    color:var(--ink-soft);
+    border-color:var(--line);
+  }
+  #clearBtn:hover{border-color:var(--ink-soft); color:var(--ink);}
+  #results{display:flex; flex-direction:column; gap:14px;}
+  .result{
+    border:1px solid var(--line);
+    border-left-width:4px;
+    border-radius:2px;
+    background:var(--panel);
+    padding:16px 18px;
+  }
+  .result.ok{border-left-color:var(--ok-line);}
+  .result.warn{border-left-color:var(--warn-line);}
+  .result.err{border-left-color:var(--err-line);}
+  .r-top{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    gap:12px;
+    flex-wrap:wrap;
+    margin-bottom:6px;
+  }
+  .r-name{
+    font-family:var(--serif);
+    font-size:17px;
+    font-weight:600;
+  }
+  .r-fha{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--ink-soft);
+  }
+  .r-loc{
+    font-family:var(--sans);
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin-top:3px;
+  }
+  .r-score-row{
+    display:flex;
+    align-items:baseline;
+    gap:14px;
+    margin-top:10px;
+    flex-wrap:wrap;
+  }
+  .r-score{
+    font-family:var(--mono);
+    font-size:28px;
+    font-weight:600;
+    line-height:1;
+  }
+  .result.ok .r-score{color:var(--ok-text);}
+  .r-score-label{
+    font-family:var(--sans);
+    font-size:13px;
+    color:var(--ink-soft);
+  }
+  .r-date{
+    font-family:var(--mono);
+    font-size:13px;
+    color:var(--ink-soft);
+  }
+  .r-note{
+    margin-top:8px;
+    font-size:13px;
+    line-height:1.5;
+  }
+  .result.warn .r-note{color:var(--warn-text);}
+  .result.err .r-note{color:var(--err-text);}
+  .r-note.rename{color:var(--warn-text);}
+  .tag{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:10px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding:2px 7px;
+    border-radius:2px;
+    margin-top:2px;
+  }
+  .result.ok .tag{background:var(--ok-bg); color:var(--ok-text); border:1px solid var(--ok-line);}
+  .result.warn .tag{background:var(--warn-bg); color:var(--warn-text); border:1px solid var(--warn-line);}
+  .result.err .tag{background:var(--err-bg); color:var(--err-text); border:1px solid var(--err-line);}
+  .empty-state{
+    font-family:var(--mono);
+    font-size:12.5px;
+    color:var(--ink-soft);
+    text-align:center;
+    padding:30px 10px;
+    border:1px dashed var(--line);
+    border-radius:3px;
+  }
+  .name-row{
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:var(--panel);
+    padding:12px 16px;
+    margin-bottom:8px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:14px;
+    flex-wrap:wrap;
+  }
+  .name-row-main{flex:1; min-width:220px;}
+  .name-row-name{
+    font-family:var(--serif);
+    font-weight:600;
+    font-size:15px;
+  }
+  .name-row-meta{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--ink-soft);
+    margin-top:3px;
+  }
+  .name-row-loc{
+    font-family:var(--sans);
+    font-size:12px;
+    color:var(--ink-soft);
+    margin-top:2px;
+  }
+  .name-row-score{
+    font-family:var(--mono);
+    font-size:15px;
+    font-weight:600;
+    color:var(--ok-text);
+    text-align:right;
+    white-space:nowrap;
+  }
+  .name-row-score .lbl{
+    display:block;
+    font-family:var(--sans);
+    font-weight:400;
+    font-size:10.5px;
+    color:var(--ink-soft);
+    text-transform:uppercase;
+    letter-spacing:.05em;
+  }
+  .name-row-noscore{
+    font-family:var(--sans);
+    font-size:11.5px;
+    color:var(--ink-soft);
+    font-style:italic;
+    text-align:right;
+  }
+  .name-match-count{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--ink-soft);
+    margin-bottom:10px;
+  }
+  footer{
+    margin-top:34px;
+    padding-top:14px;
+    border-top:1px solid var(--line);
+    font-family:var(--mono);
+    font-size:10.5px;
+    color:#9a9484;
+    line-height:1.6;
+  }
+  @media (max-width:520px){
+    h1{font-size:21px;}
+    .r-score{font-size:24px;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <p class="kicker">HUD &middot; FHA Multifamily</p>
+      <h1>Inspection Score Lookup</h1>
+    </div>
+    <div class="stamp">__DATA_DATE__<br>__ADDR_COUNT__ properties indexed<br>__SCORE_COUNT__ score records</div>
+  </header>
+
+  <div class="panel">
+    <label for="fhaInput">FHA Number(s) or Property ID(s)</label>
+    <textarea id="fhaInput" placeholder="113-35926&#10;800252036&#10;or paste a whole list, one per line"></textarea>
+    <p class="hint">Enter one FHA number or REMS property ID per line, e.g. <code>113-35926</code> or <code>800252036</code>. Dashes and spaces don't matter &mdash; you can paste several at once and mix both types.</p>
+    <div class="actions">
+      <button id="lookupBtn">Look Up</button>
+      <button id="clearBtn" type="button">Clear</button>
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="panel name-panel">
+    <p class="kicker" style="margin-bottom:2px;">Don't have the FHA number?</p>
+    <label for="nameInput" style="margin-top:10px;">Search by Property Name</label>
+    <input type="text" id="nameInput" placeholder="e.g. Cowan Place">
+    <p class="hint">Matches on partial, case-insensitive text. This searches the address index only &mdash; review the candidates below, then use the exact FHA number or Property ID above to pull the confirmed score. Name matches are never used as a stand-in for a real FHA/property ID match.</p>
+    <div class="actions">
+      <button id="nameSearchBtn">Search</button>
+      <button id="nameClearBtn" type="button">Clear</button>
+    </div>
+  </div>
+
+  <div id="nameResults"></div>
+
+  <footer>
+    Matches by FHA number against the address index, then cross-references the property ID against inspection score records. No name-based matching is used. Data is a static snapshot &mdash; re-issue this file to refresh.
+  </footer>
+</div>
+
+<script>
+const ADDR = __ADDR_JSON__;
+const SCORES = __SCORE_JSON__;
+
+// Build lookup maps (records: [fha_clean, property_id, property_name, fha_number_raw, city, state])
+const addrMap = new Map();   // fha_clean -> record
+const pidMap = new Map();    // property_id -> record
+for (const rec of ADDR) {
+  addrMap.set(rec[0], rec);
+  if (rec[1]) {
+    // a property_id can have more than one FHA record (e.g. re-financings);
+    // keep the first one encountered
+    if (!pidMap.has(rec[1])) pidMap.set(rec[1], rec);
+  }
+}
+
+function cleanFha(s) {
+  return (s || "").replace(/[-\s]/g, "").trim();
+}
+
+function formatDate(raw) {
+  if (!raw) return null;
+  // raw like "2024-04-17 00:00:00"
+  const datePart = raw.split(" ")[0];
+  const m = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return datePart;
+  const yy = m[1].slice(2);
+  return `${m[2]}/${m[3]}/${yy}`;
+}
+
+function mostRecentScore(entry) {
+  // entry: [[score1,date1],[score2,date2],[score3,date3]] -- prefer highest-numbered pair WITH data,
+  // per instructions "usually Inspection Score1/Release Date 1" is most recent.
+  for (const pair of entry) {
+    if (pair[0] || pair[1]) return pair;
+  }
+  return null;
+}
+
+function lookupOne(rawInput) {
+  const original = rawInput.trim();
+  if (!original) return null;
+  const cleaned = cleanFha(original);
+
+  // Try FHA number match first, then fall back to property ID match.
+  let addrRec = addrMap.get(cleaned);
+  let matchedBy = "fha";
+  if (!addrRec) {
+    addrRec = pidMap.get(cleaned);
+    matchedBy = "property_id";
+  }
+
+  if (!addrRec) {
+    // Last resort: the value might be a property ID that exists in the scores
+    // file but has no corresponding address-index record at all.
+    if (SCORES[cleaned]) {
+      const pair = mostRecentScore(SCORES[cleaned]);
+      return {
+        status: "warn",
+        fhaInput: original,
+        propertyId: cleaned,
+        matchedBy: "property_id",
+        noAddressRecord: true,
+        name: null,
+        score: pair ? pair[0] : null,
+        date: pair ? formatDate(pair[1]) : null,
+        note: `Property ID ${cleaned} was found in the scores file but has no matching record in the address index (no property name or FHA number on file).`
+      };
+    }
+    return {
+      status: "err",
+      fhaInput: original,
+      note: `${original} was not found as an FHA number or a property ID in the address index.`
+    };
+  }
+
+  const [, propertyId, propertyName, fhaRaw, city, state] = addrRec;
+  const scoreEntry = SCORES[propertyId];
+
+  if (!scoreEntry) {
+    return {
+      status: "warn",
+      fhaInput: original,
+      fhaRaw,
+      name: propertyName,
+      propertyId,
+      city,
+      state,
+      matchedBy,
+      note: `No score record exists for this property ID (${propertyId}).`
+    };
+  }
+
+  const pair = mostRecentScore(scoreEntry);
+  if (!pair) {
+    return {
+      status: "warn",
+      fhaInput: original,
+      fhaRaw,
+      name: propertyName,
+      propertyId,
+      city,
+      state,
+      matchedBy,
+      note: `Property ID ${propertyId} has a score record, but no score/date value is populated.`
+    };
+  }
+
+  return {
+    status: "ok",
+    fhaInput: original,
+    fhaRaw,
+    name: propertyName,
+    propertyId,
+    city,
+    state,
+    matchedBy,
+    score: pair[0],
+    date: formatDate(pair[1])
+  };
+}
+
+function renderResult(r) {
+  const div = document.createElement("div");
+  div.className = `result ${r.status}`;
+
+  if (r.status === "err") {
+    div.innerHTML = `
+      <div class="r-top">
+        <span class="r-name">${escapeHtml(r.fhaInput)}</span>
+        <span class="tag">Not found</span>
+      </div>
+      <div class="r-note">${escapeHtml(r.note)}</div>
+    `;
+    return div;
+  }
+
+  if (r.noAddressRecord) {
+    const scoreBlock = r.score
+      ? `<div class="r-score-row">
+           <span class="r-score">${escapeHtml(r.score)}</span>
+           <span class="r-score-label">Physical Inspection Score</span>
+           <span class="r-date">${escapeHtml(r.date || "")}</span>
+         </div>`
+      : "";
+    div.innerHTML = `
+      <div class="r-top">
+        <span class="r-name">Property ID ${escapeHtml(r.propertyId)}</span>
+        <span class="tag">No address record</span>
+      </div>
+      <div class="r-note">${escapeHtml(r.note)}</div>
+      ${scoreBlock}
+    `;
+    return div;
+  }
+
+  const scoreBlock = r.status === "ok"
+    ? `<div class="r-score-row">
+         <span class="r-score">${escapeHtml(r.score)}</span>
+         <span class="r-score-label">Physical Inspection Score</span>
+         <span class="r-date">${escapeHtml(r.date || "")}</span>
+       </div>`
+    : `<div class="r-note">${escapeHtml(r.note)}</div>`;
+
+  const tag = r.status === "ok"
+    ? `<span class="tag">Score found</span>`
+    : `<span class="tag">No score record</span>`;
+
+  const matchLabel = r.matchedBy === "property_id"
+    ? `Property ID ${escapeHtml(r.propertyId)} &middot; FHA #${escapeHtml(r.fhaRaw)}`
+    : `FHA #${escapeHtml(r.fhaRaw)} &middot; Property ID ${escapeHtml(r.propertyId)}`;
+
+  const locationLine = (r.city || r.state)
+    ? `<div class="r-loc">${escapeHtml([r.city, r.state].filter(Boolean).join(", "))}</div>`
+    : "";
+
+  div.innerHTML = `
+    <div class="r-top">
+      <span class="r-name">${escapeHtml(r.name)}</span>
+      ${tag}
+    </div>
+    <div class="r-fha">${matchLabel}</div>
+    ${locationLine}
+    ${scoreBlock}
+  `;
+  return div;
+}
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function runLookup() {
+  const raw = document.getElementById("fhaInput").value;
+  const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  const resultsDiv = document.getElementById("results");
+  resultsDiv.innerHTML = "";
+
+  if (lines.length === 0) {
+    resultsDiv.innerHTML = `<div class="empty-state">Enter at least one FHA number above.</div>`;
+    return;
+  }
+
+  for (const line of lines) {
+    const r = lookupOne(line);
+    if (r) resultsDiv.appendChild(renderResult(r));
+  }
+}
+
+const MAX_NAME_RESULTS = 30;
+
+function searchByName(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const matches = [];
+  for (const rec of ADDR) {
+    const name = rec[2] || "";
+    if (name.toLowerCase().includes(q)) {
+      matches.push(rec);
+    }
+  }
+  // Sort alphabetically for stable, scannable output
+  matches.sort((a, b) => (a[2] || "").localeCompare(b[2] || ""));
+  return matches;
+}
+
+function renderNameRow(rec) {
+  const [, propertyId, propertyName, fhaRaw, city, state] = rec;
+  const scoreEntry = SCORES[propertyId];
+  const pair = scoreEntry ? mostRecentScore(scoreEntry) : null;
+
+  const row = document.createElement("div");
+  row.className = "name-row";
+
+  const scoreBlock = pair
+    ? `<div class="name-row-score"><span class="lbl">Score</span>${escapeHtml(pair[0])} &middot; ${escapeHtml(formatDate(pair[1]) || "")}</div>`
+    : `<div class="name-row-noscore">no score record</div>`;
+
+  row.innerHTML = `
+    <div class="name-row-main">
+      <div class="name-row-name">${escapeHtml(propertyName)}</div>
+      <div class="name-row-meta">FHA #${escapeHtml(fhaRaw)} &middot; Property ID ${escapeHtml(propertyId)}</div>
+      <div class="name-row-loc">${escapeHtml([city, state].filter(Boolean).join(", "))}</div>
+    </div>
+    ${scoreBlock}
+  `;
+  return row;
+}
+
+function runNameSearch() {
+  const query = document.getElementById("nameInput").value;
+  const nameResultsDiv = document.getElementById("nameResults");
+  nameResultsDiv.innerHTML = "";
+
+  if (!query.trim()) {
+    nameResultsDiv.innerHTML = `<div class="empty-state">Enter part of a property name above.</div>`;
+    return;
+  }
+
+  const matches = searchByName(query);
+
+  if (matches.length === 0) {
+    nameResultsDiv.innerHTML = `<div class="empty-state">No property names matched "${escapeHtml(query.trim())}".</div>`;
+    return;
+  }
+
+  const countLine = document.createElement("div");
+  countLine.className = "name-match-count";
+  countLine.textContent = matches.length > MAX_NAME_RESULTS
+    ? `${matches.length} matches found — showing first ${MAX_NAME_RESULTS}. Try a more specific name.`
+    : `${matches.length} match${matches.length === 1 ? "" : "es"} found.`;
+  nameResultsDiv.appendChild(countLine);
+
+  for (const rec of matches.slice(0, MAX_NAME_RESULTS)) {
+    nameResultsDiv.appendChild(renderNameRow(rec));
+  }
+}
+
+document.getElementById("lookupBtn").addEventListener("click", runLookup);
+document.getElementById("fhaInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.ctrlKey) runLookup();
+});
+document.getElementById("clearBtn").addEventListener("click", () => {
+  document.getElementById("fhaInput").value = "";
+  document.getElementById("results").innerHTML = "";
+});
+
+document.getElementById("nameSearchBtn").addEventListener("click", runNameSearch);
+document.getElementById("nameInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runNameSearch();
+});
+document.getElementById("nameClearBtn").addEventListener("click", () => {
+  document.getElementById("nameInput").value = "";
+  document.getElementById("nameResults").innerHTML = "";
+});
+</script>
+</body>
+</html>
