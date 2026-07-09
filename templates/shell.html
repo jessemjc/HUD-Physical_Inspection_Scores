@@ -218,6 +218,13 @@
     font-size:13px;
     line-height:1.5;
   }
+  .r-subnote{
+    margin-top:8px;
+    font-size:11.5px;
+    line-height:1.5;
+    color:var(--ink-soft);
+    font-style:italic;
+  }
   .result.warn .r-note{color:var(--warn-text);}
   .result.err .r-note{color:var(--err-text);}
   .r-note.rename{color:var(--warn-text);}
@@ -344,7 +351,7 @@
     <p class="kicker" style="margin-bottom:2px;">Don't have the FHA number?</p>
     <label for="nameInput" style="margin-top:10px;">Search by Property Name</label>
     <input type="text" id="nameInput" placeholder="e.g. Cowan Place">
-    <p class="hint">Matches on partial, case-insensitive text. This searches the address index only &mdash; review the candidates below, then use the exact FHA number or Property ID above to pull the confirmed score. Name matches are never used as a stand-in for a real FHA/property ID match.</p>
+    <p class="hint">Matches on partial, case-insensitive text, across both FHA-insured and non-insured properties with a score on file. Review the candidates below, then use the exact FHA number or Property ID above to pull the confirmed score. Name matches are never used as a stand-in for a real FHA/property ID match.</p>
     <div class="actions">
       <button id="nameSearchBtn">Search</button>
       <button id="nameClearBtn" type="button">Clear</button>
@@ -359,18 +366,52 @@
 </div>
 
 <script>
-const ADDR = __ADDR_JSON__;
-const SCORES = __SCORE_JSON__;
+const ADDR = __ADDR_JSON__;      // [fha_clean, property_id, fha_raw, addr_name, addr_city, addr_state]
+const SCORES = __SCORE_JSON__;   // property_id -> [name, city, state, [[s1,d1],[s2,d2],[s3,d3]]]
 
-// Build lookup maps (records: [fha_clean, property_id, property_name, fha_number_raw, city, state])
-const addrMap = new Map();   // fha_clean -> record
-const pidMap = new Map();    // property_id -> record
+// FHA number -> property ID crosswalk (this is still the only source that ties
+// an FHA number to a property ID -- the scores sheet has no FHA number at all).
+const fhaToPid = new Map();
 for (const rec of ADDR) {
-  addrMap.set(rec[0], rec);
-  if (rec[1]) {
-    // a property_id can have more than one FHA record (e.g. re-financings);
-    // keep the first one encountered
-    if (!pidMap.has(rec[1])) pidMap.set(rec[1], rec);
+  if (rec[1] && !fhaToPid.has(rec[0])) fhaToPid.set(rec[0], rec[1]);
+}
+
+// Unified directory: property_id -> {name, city, state, fhaRaw}
+// Project info (name/city/state) is pulled primarily from the HUD inspection
+// scores spreadsheet, since it covers properties that aren't FHA-insured too.
+// The address spreadsheet is used only as a fallback for name/city/state, and
+// as the sole source for the FHA number.
+const directory = new Map();
+
+for (const rec of ADDR) {
+  const [, propertyId, fhaRaw, addrName, addrCity, addrState] = rec;
+  if (!propertyId) continue;
+  if (!directory.has(propertyId)) {
+    directory.set(propertyId, {
+      fhaRaw: fhaRaw || "N/A",
+      name: addrName || null,
+      city: addrCity || null,
+      state: addrState || null,
+    });
+  }
+}
+
+for (const propertyId in SCORES) {
+  const [scoreName, scoreCity, scoreState] = SCORES[propertyId];
+  const existing = directory.get(propertyId);
+  if (existing) {
+    // Scores-sheet project info takes priority when present.
+    existing.name = scoreName || existing.name;
+    existing.city = scoreCity || existing.city;
+    existing.state = scoreState || existing.state;
+  } else {
+    // Property ID with a score record but no FHA-insured address record at all.
+    directory.set(propertyId, {
+      fhaRaw: "N/A",
+      name: scoreName || null,
+      city: scoreCity || null,
+      state: scoreState || null,
+    });
   }
 }
 
@@ -388,10 +429,13 @@ function formatDate(raw) {
   return `${m[2]}/${m[3]}/${yy}`;
 }
 
-function mostRecentScore(entry) {
-  // entry: [[score1,date1],[score2,date2],[score3,date3]] -- prefer highest-numbered pair WITH data,
-  // per instructions "usually Inspection Score1/Release Date 1" is most recent.
-  for (const pair of entry) {
+function mostRecentScore(scoreRecord) {
+  // scoreRecord: [name, city, state, [[score1,date1],[score2,date2],[score3,date3]]]
+  // prefer highest-numbered pair WITH data, per instructions
+  // "usually Inspection Score1/Release Date 1" is most recent.
+  if (!scoreRecord) return null;
+  const pairs = scoreRecord[3];
+  for (const pair of pairs) {
     if (pair[0] || pair[1]) return pair;
   }
   return null;
@@ -402,79 +446,62 @@ function lookupOne(rawInput) {
   if (!original) return null;
   const cleaned = cleanFha(original);
 
-  // Try FHA number match first, then fall back to property ID match.
-  let addrRec = addrMap.get(cleaned);
-  let matchedBy = "fha";
-  if (!addrRec) {
-    addrRec = pidMap.get(cleaned);
+  // Try FHA number first, then fall back to treating the input as a property ID directly.
+  let propertyId = fhaToPid.get(cleaned);
+  let matchedBy = propertyId ? "fha" : null;
+  if (!propertyId && (directory.has(cleaned) || SCORES[cleaned])) {
+    propertyId = cleaned;
     matchedBy = "property_id";
   }
 
-  if (!addrRec) {
-    // Last resort: the value might be a property ID that exists in the scores
-    // file but has no corresponding address-index record at all.
-    if (SCORES[cleaned]) {
-      const pair = mostRecentScore(SCORES[cleaned]);
-      return {
-        status: pair ? "ok" : "warn",
-        fhaInput: original,
-        propertyId: cleaned,
-        matchedBy: "property_id",
-        noAddressRecord: true,
-        name: null,
-        score: pair ? pair[0] : null,
-        date: pair ? formatDate(pair[1]) : null,
-        note: `Property ID ${cleaned} was found in the scores file but has no matching record in the address index (no property name or FHA number on file).`
-      };
-    }
+  if (!propertyId) {
     return {
       status: "err",
       fhaInput: original,
-      note: `${original} was not found as an FHA number or a property ID in the address index.`
+      note: `${original} was not found as an FHA number or a property ID.`
     };
   }
 
-  const [, propertyId, propertyName, fhaRaw, city, state] = addrRec;
-  const scoreEntry = SCORES[propertyId];
+  const dirEntry = directory.get(propertyId) || {};
+  const name = dirEntry.name || `Property ID ${propertyId}`;
+  const city = dirEntry.city || null;
+  const state = dirEntry.state || null;
+  const fhaRaw = dirEntry.fhaRaw || "N/A";
+  const hasAddressRecord = fhaRaw !== "N/A";
 
-  if (!scoreEntry) {
+  const scoreRecord = SCORES[propertyId];
+  const pair = mostRecentScore(scoreRecord);
+
+  const base = {
+    fhaInput: original,
+    propertyId,
+    matchedBy,
+    name,
+    city,
+    state,
+    fhaRaw,
+    hasAddressRecord,
+  };
+
+  if (!scoreRecord) {
     return {
+      ...base,
       status: "warn",
-      fhaInput: original,
-      fhaRaw,
-      name: propertyName,
-      propertyId,
-      city,
-      state,
-      matchedBy,
       note: `No score record exists for this property ID (${propertyId}).`
     };
   }
 
-  const pair = mostRecentScore(scoreEntry);
   if (!pair) {
     return {
+      ...base,
       status: "warn",
-      fhaInput: original,
-      fhaRaw,
-      name: propertyName,
-      propertyId,
-      city,
-      state,
-      matchedBy,
       note: `Property ID ${propertyId} has a score record, but no score/date value is populated.`
     };
   }
 
   return {
+    ...base,
     status: "ok",
-    fhaInput: original,
-    fhaRaw,
-    name: propertyName,
-    propertyId,
-    city,
-    state,
-    matchedBy,
     score: pair[0],
     date: formatDate(pair[1])
   };
@@ -491,28 +518,6 @@ function renderResult(r) {
         <span class="tag">Not found</span>
       </div>
       <div class="r-note">${escapeHtml(r.note)}</div>
-    `;
-    return div;
-  }
-
-  if (r.noAddressRecord) {
-    const scoreBlock = r.score
-      ? `<div class="r-score-row">
-           <span class="r-score">${escapeHtml(r.score)}</span>
-           <span class="r-score-label">Physical Inspection Score</span>
-           <span class="r-date">${escapeHtml(r.date || "")}</span>
-         </div>`
-      : "";
-    const tag = r.status === "ok"
-      ? `<span class="tag">Score found &middot; no address record</span>`
-      : `<span class="tag">No address record</span>`;
-    div.innerHTML = `
-      <div class="r-top">
-        <span class="r-name">Property ID ${escapeHtml(r.propertyId)}</span>
-        ${tag}
-      </div>
-      <div class="r-note">${escapeHtml(r.note)}</div>
-      ${scoreBlock}
     `;
     return div;
   }
@@ -537,6 +542,10 @@ function renderResult(r) {
     ? `<div class="r-loc">${escapeHtml([r.city, r.state].filter(Boolean).join(", "))}</div>`
     : "";
 
+  const noAddressNote = !r.hasAddressRecord
+    ? `<div class="r-subnote">No FHA-insured address record on file for this property ID &mdash; name/location pulled from the inspection scores dataset.</div>`
+    : "";
+
   div.innerHTML = `
     <div class="r-top">
       <span class="r-name">${escapeHtml(r.name)}</span>
@@ -545,6 +554,7 @@ function renderResult(r) {
     <div class="r-fha">${matchLabel}</div>
     ${locationLine}
     ${scoreBlock}
+    ${noAddressNote}
   `;
   return div;
 }
@@ -580,21 +590,21 @@ function searchByName(query) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const matches = [];
-  for (const rec of ADDR) {
-    const name = rec[2] || "";
+  for (const [propertyId, entry] of directory.entries()) {
+    const name = entry.name || "";
     if (name.toLowerCase().includes(q)) {
-      matches.push(rec);
+      matches.push([propertyId, entry]);
     }
   }
   // Sort alphabetically for stable, scannable output
-  matches.sort((a, b) => (a[2] || "").localeCompare(b[2] || ""));
+  matches.sort((a, b) => (a[1].name || "").localeCompare(b[1].name || ""));
   return matches;
 }
 
-function renderNameRow(rec) {
-  const [, propertyId, propertyName, fhaRaw, city, state] = rec;
-  const scoreEntry = SCORES[propertyId];
-  const pair = scoreEntry ? mostRecentScore(scoreEntry) : null;
+function renderNameRow([propertyId, entry]) {
+  const { name, city, state, fhaRaw } = entry;
+  const scoreRecord = SCORES[propertyId];
+  const pair = mostRecentScore(scoreRecord);
 
   const row = document.createElement("div");
   row.className = "name-row";
@@ -605,7 +615,7 @@ function renderNameRow(rec) {
 
   row.innerHTML = `
     <div class="name-row-main">
-      <div class="name-row-name">${escapeHtml(propertyName)}</div>
+      <div class="name-row-name">${escapeHtml(name)}</div>
       <div class="name-row-meta">FHA #${escapeHtml(fhaRaw)} &middot; Property ID ${escapeHtml(propertyId)}</div>
       <div class="name-row-loc">${escapeHtml([city, state].filter(Boolean).join(", "))}</div>
     </div>
