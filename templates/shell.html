@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FHA Multifamily Inspection Score Lookup</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --ink:#1b2430;
@@ -310,6 +311,24 @@
     color:var(--ink-soft);
     margin-bottom:10px;
   }
+  .export-row{
+    margin:-6px 0 22px;
+  }
+  #exportBtn, #nameExportBtn{
+    background:transparent;
+    color:var(--brass-dark);
+    border:1px solid var(--brass);
+    font-family:var(--sans);
+    font-weight:600;
+    font-size:13px;
+    border-radius:2px;
+    padding:8px 16px;
+    cursor:pointer;
+  }
+  #exportBtn:hover, #nameExportBtn:hover{
+    background:var(--brass);
+    color:#fff;
+  }
   footer{
     margin-top:34px;
     padding-top:14px;
@@ -346,6 +365,9 @@
   </div>
 
   <div id="results"></div>
+  <div class="export-row" id="exportRow" style="display:none;">
+    <button id="exportBtn" type="button">Export to Excel</button>
+  </div>
 
   <div class="panel name-panel">
     <p class="kicker" style="margin-bottom:2px;">Don't have the FHA number?</p>
@@ -359,6 +381,9 @@
   </div>
 
   <div id="nameResults"></div>
+  <div class="export-row" id="nameExportRow" style="display:none;">
+    <button id="nameExportBtn" type="button">Export to Excel</button>
+  </div>
 
   <footer>
     Matches by FHA number against the address index, then cross-references the property ID against inspection score records. No name-based matching is used. Data is a static snapshot &mdash; re-issue this file to refresh.
@@ -567,21 +592,30 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;");
 }
 
+let lastLookupResults = [];
+
 function runLookup() {
   const raw = document.getElementById("fhaInput").value;
   const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
   const resultsDiv = document.getElementById("results");
   resultsDiv.innerHTML = "";
+  lastLookupResults = [];
 
   if (lines.length === 0) {
     resultsDiv.innerHTML = `<div class="empty-state">Enter at least one FHA number above.</div>`;
+    document.getElementById("exportRow").style.display = "none";
     return;
   }
 
   for (const line of lines) {
     const r = lookupOne(line);
-    if (r) resultsDiv.appendChild(renderResult(r));
+    if (r) {
+      resultsDiv.appendChild(renderResult(r));
+      lastLookupResults.push(r);
+    }
   }
+
+  document.getElementById("exportRow").style.display = lastLookupResults.length ? "block" : "none";
 }
 
 const MAX_NAME_RESULTS = 30;
@@ -624,13 +658,17 @@ function renderNameRow([propertyId, entry]) {
   return row;
 }
 
+let lastNameResults = [];
+
 function runNameSearch() {
   const query = document.getElementById("nameInput").value;
   const nameResultsDiv = document.getElementById("nameResults");
   nameResultsDiv.innerHTML = "";
+  lastNameResults = [];
 
   if (!query.trim()) {
     nameResultsDiv.innerHTML = `<div class="empty-state">Enter part of a property name above.</div>`;
+    document.getElementById("nameExportRow").style.display = "none";
     return;
   }
 
@@ -638,6 +676,7 @@ function runNameSearch() {
 
   if (matches.length === 0) {
     nameResultsDiv.innerHTML = `<div class="empty-state">No property names matched "${escapeHtml(query.trim())}".</div>`;
+    document.getElementById("nameExportRow").style.display = "none";
     return;
   }
 
@@ -648,9 +687,79 @@ function runNameSearch() {
     : `${matches.length} match${matches.length === 1 ? "" : "es"} found.`;
   nameResultsDiv.appendChild(countLine);
 
-  for (const rec of matches.slice(0, MAX_NAME_RESULTS)) {
+  const shown = matches.slice(0, MAX_NAME_RESULTS);
+  for (const rec of shown) {
     nameResultsDiv.appendChild(renderNameRow(rec));
   }
+  lastNameResults = shown;
+
+  document.getElementById("nameExportRow").style.display = lastNameResults.length ? "block" : "none";
+}
+
+function downloadWorkbook(rows, filenamePrefix) {
+  if (!window.XLSX) {
+    alert("Excel export needs an internet connection to load (it uses a small external library). Everything else in this tool works fine offline.");
+    return;
+  }
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws["!cols"] = Object.keys(rows[0] || {}).map(key => ({
+    wch: Math.max(key.length, ...rows.map(r => String(r[key] ?? "").length)) + 2
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Results");
+  const today = new Date().toISOString().slice(0, 10);
+  XLSX.writeFile(wb, `${filenamePrefix}_${today}.xlsx`);
+}
+
+function exportLookupResults() {
+  if (!lastLookupResults.length) return;
+  const rows = lastLookupResults.map(r => {
+    if (r.status === "err") {
+      return {
+        "Search Input": r.fhaInput,
+        "Property Name": "",
+        "FHA Number": "",
+        "Property ID": "",
+        "City": "",
+        "State": "",
+        "Inspection Score": "",
+        "Release Date": "",
+        "Result": "Not found",
+        "Notes": r.note,
+      };
+    }
+    return {
+      "Search Input": r.fhaInput,
+      "Property Name": r.name,
+      "FHA Number": r.fhaRaw,
+      "Property ID": r.propertyId,
+      "City": r.city || "",
+      "State": r.state || "",
+      "Inspection Score": r.status === "ok" ? r.score : "",
+      "Release Date": r.status === "ok" ? (r.date || "") : "",
+      "Result": r.status === "ok" ? "Score found" : "No score record",
+      "Notes": r.status === "ok" ? "" : r.note,
+    };
+  });
+  downloadWorkbook(rows, "fha_inspection_score_lookup");
+}
+
+function exportNameResults() {
+  if (!lastNameResults.length) return;
+  const rows = lastNameResults.map(([propertyId, entry]) => {
+    const scoreRecord = SCORES[propertyId];
+    const pair = mostRecentScore(scoreRecord);
+    return {
+      "Property Name": entry.name || "",
+      "FHA Number": entry.fhaRaw,
+      "Property ID": propertyId,
+      "City": entry.city || "",
+      "State": entry.state || "",
+      "Inspection Score": pair ? pair[0] : "",
+      "Release Date": pair ? (formatDate(pair[1]) || "") : "",
+    };
+  });
+  downloadWorkbook(rows, "fha_property_name_search");
 }
 
 document.getElementById("lookupBtn").addEventListener("click", runLookup);
@@ -660,7 +769,10 @@ document.getElementById("fhaInput").addEventListener("keydown", (e) => {
 document.getElementById("clearBtn").addEventListener("click", () => {
   document.getElementById("fhaInput").value = "";
   document.getElementById("results").innerHTML = "";
+  document.getElementById("exportRow").style.display = "none";
+  lastLookupResults = [];
 });
+document.getElementById("exportBtn").addEventListener("click", exportLookupResults);
 
 document.getElementById("nameSearchBtn").addEventListener("click", runNameSearch);
 document.getElementById("nameInput").addEventListener("keydown", (e) => {
@@ -669,7 +781,11 @@ document.getElementById("nameInput").addEventListener("keydown", (e) => {
 document.getElementById("nameClearBtn").addEventListener("click", () => {
   document.getElementById("nameInput").value = "";
   document.getElementById("nameResults").innerHTML = "";
+  document.getElementById("nameExportRow").style.display = "none";
+  lastNameResults = [];
 });
+document.getElementById("nameExportBtn").addEventListener("click", exportNameResults);
+
 </script>
 </body>
 </html>
