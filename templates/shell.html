@@ -904,20 +904,40 @@ function renderMyList() {
   }
 }
 
+// Re-inserts the standard NNN-NNNNN dash in an FHA number regardless of whether
+// the source data had it -- strips any existing dashes/spaces first, then
+// reinserts after the 3rd digit, so formatting is always consistent.
+function formatFhaWithDash(raw) {
+  const digits = String(raw).replace(/[-\s]/g, "");
+  if (digits.length <= 3) return digits;
+  return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+}
+
+// Excel's clipboard TSV format requires quoting any field that itself contains
+// a tab, newline, or double quote (internal quotes get doubled, RFC4180-style).
+// We need this because the project-name cell below has an embedded line break.
+function tsvQuote(text) {
+  if (/[\t\n"]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
 function copyMyListForForm() {
   if (myList.size === 0) return;
   // Column layout on Page 2 of the 2530: C = project name/ID/agency, D/E/F/G/H = untouched,
   // I = score/date. Six tab-separated fields per row (C, D, E, F, G, H, I is 7 columns ->
   // 6 tabs) so a paste starting at C8 lands the project field in C and the score/date in I,
-  // leaving D-H alone.
+  // leaving D-H alone. The project name and its ID/agency line sit in the SAME cell (C),
+  // separated by a line break, rather than crammed onto one line in parentheses.
   const lines = Array.from(myList.values()).map(entry => {
-    const idPart = (entry.fhaRaw && entry.fhaRaw !== "N/A")
-      ? `FHA #${entry.fhaRaw}`
-      : `Property ID ${entry.propertyId}`;
-    const projectField = `${entry.name} (${idPart}), HUD`;
+    const idLine = (entry.fhaRaw && entry.fhaRaw !== "N/A")
+      ? `FHA #${formatFhaWithDash(entry.fhaRaw)}, HUD`
+      : `Property ID ${entry.propertyId}, HUD`;
+    const projectField = tsvQuote(`${entry.name}\n${idLine}`);
     return [projectField, "", "", "", "", "", entry.score].join("\t");
   });
-  const text = lines.join("\n");
+  const text = lines.join("\r\n");
 
   const showConfirm = () => {
     const confirm = document.getElementById("myListCopyConfirm");
