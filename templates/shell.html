@@ -313,6 +313,9 @@
   }
   .export-row{
     margin:-6px 0 22px;
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
   }
   #exportBtn, #nameExportBtn{
     background:transparent;
@@ -464,6 +467,7 @@
   <div id="results"></div>
   <div class="export-row" id="exportRow" style="display:none;">
     <button id="exportBtn" type="button">Export to Excel</button>
+    <button id="addAllLookupBtn" type="button" style="background:transparent; color:var(--brass-dark); border:1px solid var(--brass);">Add All to My List</button>
   </div>
 
   <div class="panel name-panel">
@@ -480,12 +484,13 @@
   <div id="nameResults"></div>
   <div class="export-row" id="nameExportRow" style="display:none;">
     <button id="nameExportBtn" type="button">Export to Excel</button>
+    <button id="addAllNameBtn" type="button" style="background:transparent; color:var(--brass-dark); border:1px solid var(--brass);">Add All to My List</button>
   </div>
 
   <div class="panel mylist-panel">
     <p class="kicker" style="margin-bottom:2px;">Building a HUD Form 2530?</p>
     <label style="margin-top:10px;">My List</label>
-    <p class="hint">Add properties here from the results above, then copy the whole list at once. Pasting into <strong>Page 2, cell C8</strong> of the 2530 (Schedule A) will fill in the project name and score/date columns for every row, in order. This list clears when you leave or refresh the page.</p>
+    <p class="hint">Add properties here from the results above, then copy the whole list at once. Pasting into <strong>Page 2, cell C8</strong> of the 2530 (Schedule A) will fill in project name/ID/agency (column 2) and score/date (column 6) for every row, in order.</p>
     <div id="myListResults" style="margin-top:14px;"></div>
     <div class="actions" style="align-items:center;">
       <button id="myListCopyBtn" type="button">Copy All for 2530</button>
@@ -502,6 +507,24 @@
 <script>
 const ADDR = __ADDR_JSON__;      // [fha_clean, property_id, fha_raw, addr_name, addr_city, addr_state]
 const SCORES = __SCORE_JSON__;   // property_id -> [name, city, state, [[s1,d1],[s2,d2],[s3,d3]]]
+
+// HUD's own published "as of" date for the scores spreadsheet (same string shown
+// in the header stamp). Used to build the "No score as of xx/xx/xxxx" message
+// for the My List / 2530 export -- reuses build.py's existing placeholder so it
+// stays accurate automatically on every weekly rebuild.
+const SCORES_AS_OF_RAW = "__SCORES_AS_OF__";
+
+function formatAsOfDate(raw) {
+  if (!raw || raw === "Unknown") return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw; // fall back to HUD's raw text if it doesn't parse
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${mm}/${dd}/${d.getFullYear()}`;
+}
+
+const NO_SCORE_ASOF = formatAsOfDate(SCORES_AS_OF_RAW);
+const NO_SCORE_MESSAGE = NO_SCORE_ASOF ? `No score as of ${NO_SCORE_ASOF}` : "No score on file";
 
 // FHA number -> property ID crosswalk (this is still the only source that ties
 // an FHA number to a property ID -- the scores sheet has no FHA number at all).
@@ -641,6 +664,22 @@ function lookupOne(rawInput) {
   };
 }
 
+// Shared helpers so per-item "Add to List" buttons and the "Add All" buttons
+// always compute the score/no-score text the same way.
+function lookupResultToListEntry(r) {
+  if (r.status === "err") return null;
+  const scoreDisplay = r.status === "ok"
+    ? (r.date ? `REAC ${r.score} (${r.date})` : `REAC ${r.score}`)
+    : NO_SCORE_MESSAGE;
+  return { propertyId: r.propertyId, name: r.name, city: r.city, state: r.state, fhaRaw: r.fhaRaw, score: scoreDisplay };
+}
+
+function nameRowToListEntry([propertyId, entry]) {
+  const pair = mostRecentScore(SCORES[propertyId]);
+  const scoreDisplay = pair ? `REAC ${pair[0]} (${formatDate(pair[1]) || ""})`.replace(" ()", "") : NO_SCORE_MESSAGE;
+  return { propertyId, name: entry.name, city: entry.city, state: entry.state, fhaRaw: entry.fhaRaw, score: scoreDisplay };
+}
+
 function renderResult(r) {
   const div = document.createElement("div");
   div.className = `result ${r.status}`;
@@ -680,9 +719,7 @@ function renderResult(r) {
     ? `<div class="r-subnote">No FHA-insured address record on file for this property ID &mdash; name/location pulled from the inspection scores dataset.</div>`
     : "";
 
-  const scoreDisplay = r.status === "ok"
-    ? (r.date ? `${r.score} (${r.date})` : `${r.score}`)
-    : "";
+  const scoreDisplay = lookupResultToListEntry(r).score;
   const isAdded = myList.has(r.propertyId);
 
   div.dataset.propertyId = r.propertyId;
@@ -765,7 +802,7 @@ function renderNameRow([propertyId, entry]) {
   const row = document.createElement("div");
   row.className = "name-row";
 
-  const scoreDisplay = pair ? `${pair[0]} (${formatDate(pair[1]) || ""})`.replace(" ()", "") : "";
+  const scoreDisplay = nameRowToListEntry([propertyId, entry]).score;
   const scoreBlock = pair
     ? `<div class="name-row-score"><span class="lbl">Score</span>${escapeHtml(pair[0])} &middot; ${escapeHtml(formatDate(pair[1]) || "")}</div>`
     : `<div class="name-row-noscore">no score record</div>`;
@@ -785,7 +822,7 @@ function renderNameRow([propertyId, entry]) {
   return row;
 }
 
-function addToMyList(data) {
+function addToMyList(data, skipRender = false) {
   if (!data.propertyId || myList.has(data.propertyId)) return;
   myList.set(data.propertyId, {
     propertyId: data.propertyId,
@@ -795,12 +832,29 @@ function addToMyList(data) {
     fhaRaw: data.fhaRaw || "N/A",
     score: data.score || "",
   });
-  renderMyList();
+  if (!skipRender) renderMyList();
   // Flip every matching "Add to List" button (main results + name results) to "Added".
   document.querySelectorAll(`.add-list-btn[data-add-property-id="${cssEscape(data.propertyId)}"]`).forEach(btn => {
     btn.classList.add("added");
     btn.textContent = "\u2713 Added";
   });
+}
+
+function addAllLookupResultsToMyList() {
+  if (!lastLookupResults.length) return;
+  lastLookupResults.forEach(r => {
+    const entry = lookupResultToListEntry(r);
+    if (entry) addToMyList(entry, true);
+  });
+  renderMyList();
+}
+
+function addAllNameResultsToMyList() {
+  if (!lastNameResults.length) return;
+  lastNameResults.forEach(rec => {
+    addToMyList(nameRowToListEntry(rec), true);
+  });
+  renderMyList();
 }
 
 function removeFromMyList(propertyId) {
@@ -834,9 +888,10 @@ function renderMyList() {
   for (const entry of myList.values()) {
     const row = document.createElement("div");
     row.className = "mylist-row";
-    const scoreBlock = entry.score
+    const isRealScore = entry.score !== NO_SCORE_MESSAGE;
+    const scoreBlock = isRealScore
       ? `<div class="mylist-row-score"><span class="lbl">Score</span>${escapeHtml(entry.score)}</div>`
-      : `<div class="mylist-row-noscore">no score on file</div>`;
+      : `<div class="mylist-row-noscore">${escapeHtml(entry.score)}</div>`;
     row.innerHTML = `
       <div class="mylist-row-main">
         <div class="mylist-row-name">${escapeHtml(entry.name)}</div>
@@ -851,11 +906,16 @@ function renderMyList() {
 
 function copyMyListForForm() {
   if (myList.size === 0) return;
-  // Column layout on Page 2 of the 2530: C = project name, D/E/F/G/H = untouched, I = score/date.
-  // Six tab-separated fields per row (C, D, E, F, G, H, I is 7 columns -> 6 tabs) so a paste
-  // starting at C8 lands the name in C and the score/date in I, leaving D-H alone.
+  // Column layout on Page 2 of the 2530: C = project name/ID/agency, D/E/F/G/H = untouched,
+  // I = score/date. Six tab-separated fields per row (C, D, E, F, G, H, I is 7 columns ->
+  // 6 tabs) so a paste starting at C8 lands the project field in C and the score/date in I,
+  // leaving D-H alone.
   const lines = Array.from(myList.values()).map(entry => {
-    return [entry.name, "", "", "", "", "", entry.score].join("\t");
+    const idPart = (entry.fhaRaw && entry.fhaRaw !== "N/A")
+      ? `FHA #${entry.fhaRaw}`
+      : `Property ID ${entry.propertyId}`;
+    const projectField = `${entry.name} (${idPart}), HUD`;
+    return [projectField, "", "", "", "", "", entry.score].join("\t");
   });
   const text = lines.join("\n");
 
@@ -912,6 +972,8 @@ document.addEventListener("click", (e) => {
 });
 
 document.getElementById("myListCopyBtn").addEventListener("click", copyMyListForForm);
+document.getElementById("addAllLookupBtn").addEventListener("click", addAllLookupResultsToMyList);
+document.getElementById("addAllNameBtn").addEventListener("click", addAllNameResultsToMyList);
 document.getElementById("myListClearBtn").addEventListener("click", () => {
   myList.clear();
   renderMyList();
