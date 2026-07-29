@@ -329,6 +329,103 @@
     background:var(--brass);
     color:#fff;
   }
+  .add-list-btn{
+    font-family:var(--sans);
+    font-weight:600;
+    font-size:11.5px;
+    border-radius:2px;
+    padding:5px 11px;
+    cursor:pointer;
+    background:transparent;
+    color:var(--brass-dark);
+    border:1px solid var(--brass);
+    white-space:nowrap;
+  }
+  .add-list-btn:hover{background:var(--brass); color:#fff;}
+  .add-list-btn.added{
+    background:var(--ok-bg);
+    color:var(--ok-text);
+    border-color:var(--ok-line);
+    cursor:default;
+  }
+  .add-list-btn.added:hover{background:var(--ok-bg); color:var(--ok-text);}
+  .r-top-actions, .name-row-actions{
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .mylist-panel{border-top:3px solid var(--ink);}
+  .mylist-row{
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:var(--panel);
+    padding:12px 16px;
+    margin-bottom:8px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:14px;
+    flex-wrap:wrap;
+  }
+  .mylist-row-main{flex:1; min-width:220px;}
+  .mylist-row-name{
+    font-family:var(--serif);
+    font-weight:600;
+    font-size:15px;
+  }
+  .mylist-row-meta{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--ink-soft);
+    margin-top:3px;
+  }
+  .mylist-row-score{
+    font-family:var(--mono);
+    font-size:14px;
+    font-weight:600;
+    color:var(--ok-text);
+    text-align:right;
+    white-space:nowrap;
+  }
+  .mylist-row-score .lbl{
+    display:block;
+    font-family:var(--sans);
+    font-weight:400;
+    font-size:10.5px;
+    color:var(--ink-soft);
+    text-transform:uppercase;
+    letter-spacing:.05em;
+  }
+  .mylist-row-noscore{
+    font-family:var(--sans);
+    font-size:11.5px;
+    color:var(--ink-soft);
+    font-style:italic;
+    text-align:right;
+  }
+  .mylist-remove-btn{
+    font-family:var(--sans);
+    font-size:11px;
+    color:var(--err-text);
+    background:transparent;
+    border:1px solid var(--err-line);
+    border-radius:2px;
+    padding:5px 9px;
+    cursor:pointer;
+  }
+  .mylist-remove-btn:hover{background:var(--err-bg);}
+  .mylist-count{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--ink-soft);
+    margin-bottom:10px;
+  }
+  .mylist-copy-confirm{
+    font-family:var(--sans);
+    font-size:12.5px;
+    color:var(--ok-text);
+    margin-left:10px;
+  }
   footer{
     margin-top:34px;
     padding-top:14px;
@@ -383,6 +480,18 @@
   <div id="nameResults"></div>
   <div class="export-row" id="nameExportRow" style="display:none;">
     <button id="nameExportBtn" type="button">Export to Excel</button>
+  </div>
+
+  <div class="panel mylist-panel">
+    <p class="kicker" style="margin-bottom:2px;">Building a HUD Form 2530?</p>
+    <label style="margin-top:10px;">My List</label>
+    <p class="hint">Add properties here from the results above, then copy the whole list at once. Pasting into <strong>Page 2, cell C8</strong> of the 2530 (Schedule A) will fill in the project name and score/date columns for every row, in order. This list clears when you leave or refresh the page.</p>
+    <div id="myListResults" style="margin-top:14px;"></div>
+    <div class="actions" style="align-items:center;">
+      <button id="myListCopyBtn" type="button">Copy All for 2530</button>
+      <button id="myListClearBtn" type="button" style="background:transparent; color:var(--ink-soft); border:1px solid var(--line);">Clear List</button>
+      <span id="myListCopyConfirm" class="mylist-copy-confirm" style="display:none;">Copied &mdash; paste into cell C8 on Page 2</span>
+    </div>
   </div>
 
   <footer>
@@ -571,10 +680,19 @@ function renderResult(r) {
     ? `<div class="r-subnote">No FHA-insured address record on file for this property ID &mdash; name/location pulled from the inspection scores dataset.</div>`
     : "";
 
+  const scoreDisplay = r.status === "ok"
+    ? (r.date ? `${r.score} (${r.date})` : `${r.score}`)
+    : "";
+  const isAdded = myList.has(r.propertyId);
+
+  div.dataset.propertyId = r.propertyId;
   div.innerHTML = `
     <div class="r-top">
       <span class="r-name">${escapeHtml(r.name)}</span>
-      ${tag}
+      <div class="r-top-actions">
+        ${tag}
+        <button type="button" class="add-list-btn${isAdded ? " added" : ""}" data-add-property-id="${escapeHtml(r.propertyId)}" data-add-name="${escapeHtml(r.name)}" data-add-city="${escapeHtml(r.city || "")}" data-add-state="${escapeHtml(r.state || "")}" data-add-fha="${escapeHtml(r.fhaRaw)}" data-add-score="${escapeHtml(scoreDisplay)}">${isAdded ? "&#10003; Added" : "+ Add to List"}</button>
+      </div>
     </div>
     <div class="r-fha">${matchLabel}</div>
     ${locationLine}
@@ -591,6 +709,10 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
+
+// "My List" -- session-only (not persisted across reloads), keyed by property ID.
+// Used to build a batch to copy into the HUD 2530 template (Page 2, columns C and I).
+const myList = new Map();
 
 let lastLookupResults = [];
 
@@ -643,9 +765,11 @@ function renderNameRow([propertyId, entry]) {
   const row = document.createElement("div");
   row.className = "name-row";
 
+  const scoreDisplay = pair ? `${pair[0]} (${formatDate(pair[1]) || ""})`.replace(" ()", "") : "";
   const scoreBlock = pair
     ? `<div class="name-row-score"><span class="lbl">Score</span>${escapeHtml(pair[0])} &middot; ${escapeHtml(formatDate(pair[1]) || "")}</div>`
     : `<div class="name-row-noscore">no score record</div>`;
+  const isAdded = myList.has(propertyId);
 
   row.innerHTML = `
     <div class="name-row-main">
@@ -653,10 +777,151 @@ function renderNameRow([propertyId, entry]) {
       <div class="name-row-meta">FHA #${escapeHtml(fhaRaw)} &middot; Property ID ${escapeHtml(propertyId)}</div>
       <div class="name-row-loc">${escapeHtml([city, state].filter(Boolean).join(", "))}</div>
     </div>
-    ${scoreBlock}
+    <div class="name-row-actions">
+      ${scoreBlock}
+      <button type="button" class="add-list-btn${isAdded ? " added" : ""}" data-add-property-id="${escapeHtml(propertyId)}" data-add-name="${escapeHtml(name)}" data-add-city="${escapeHtml(city || "")}" data-add-state="${escapeHtml(state || "")}" data-add-fha="${escapeHtml(fhaRaw)}" data-add-score="${escapeHtml(scoreDisplay)}">${isAdded ? "&#10003; Added" : "+ Add to List"}</button>
+    </div>
   `;
   return row;
 }
+
+function addToMyList(data) {
+  if (!data.propertyId || myList.has(data.propertyId)) return;
+  myList.set(data.propertyId, {
+    propertyId: data.propertyId,
+    name: data.name,
+    city: data.city || "",
+    state: data.state || "",
+    fhaRaw: data.fhaRaw || "N/A",
+    score: data.score || "",
+  });
+  renderMyList();
+  // Flip every matching "Add to List" button (main results + name results) to "Added".
+  document.querySelectorAll(`.add-list-btn[data-add-property-id="${cssEscape(data.propertyId)}"]`).forEach(btn => {
+    btn.classList.add("added");
+    btn.textContent = "\u2713 Added";
+  });
+}
+
+function removeFromMyList(propertyId) {
+  myList.delete(propertyId);
+  renderMyList();
+  document.querySelectorAll(`.add-list-btn[data-add-property-id="${cssEscape(propertyId)}"]`).forEach(btn => {
+    btn.classList.remove("added");
+    btn.textContent = "+ Add to List";
+  });
+}
+
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, "\\$&");
+}
+
+function renderMyList() {
+  const container = document.getElementById("myListResults");
+  container.innerHTML = "";
+  document.getElementById("myListCopyConfirm").style.display = "none";
+
+  if (myList.size === 0) {
+    container.innerHTML = `<div class="empty-state">Your list is empty. Add properties from the results above.</div>`;
+    return;
+  }
+
+  const countLine = document.createElement("div");
+  countLine.className = "mylist-count";
+  countLine.textContent = `${myList.size} propert${myList.size === 1 ? "y" : "ies"} in list &mdash; will fill rows starting at C8 on Page 2.`.replace("&mdash;", "\u2014");
+  container.appendChild(countLine);
+
+  for (const entry of myList.values()) {
+    const row = document.createElement("div");
+    row.className = "mylist-row";
+    const scoreBlock = entry.score
+      ? `<div class="mylist-row-score"><span class="lbl">Score</span>${escapeHtml(entry.score)}</div>`
+      : `<div class="mylist-row-noscore">no score on file</div>`;
+    row.innerHTML = `
+      <div class="mylist-row-main">
+        <div class="mylist-row-name">${escapeHtml(entry.name)}</div>
+        <div class="mylist-row-meta">FHA #${escapeHtml(entry.fhaRaw)} &middot; Property ID ${escapeHtml(entry.propertyId)}</div>
+      </div>
+      ${scoreBlock}
+      <button type="button" class="mylist-remove-btn" data-remove-property-id="${escapeHtml(entry.propertyId)}">Remove</button>
+    `;
+    container.appendChild(row);
+  }
+}
+
+function copyMyListForForm() {
+  if (myList.size === 0) return;
+  // Column layout on Page 2 of the 2530: C = project name, D/E/F/G/H = untouched, I = score/date.
+  // Six tab-separated fields per row (C, D, E, F, G, H, I is 7 columns -> 6 tabs) so a paste
+  // starting at C8 lands the name in C and the score/date in I, leaving D-H alone.
+  const lines = Array.from(myList.values()).map(entry => {
+    return [entry.name, "", "", "", "", "", entry.score].join("\t");
+  });
+  const text = lines.join("\n");
+
+  const showConfirm = () => {
+    const confirm = document.getElementById("myListCopyConfirm");
+    confirm.style.display = "inline";
+    clearTimeout(showConfirm._t);
+    showConfirm._t = setTimeout(() => { confirm.style.display = "none"; }, 4000);
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(showConfirm).catch(() => fallbackCopy(text, showConfirm));
+  } else {
+    fallbackCopy(text, showConfirm);
+  }
+}
+
+function fallbackCopy(text, onSuccess) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    onSuccess();
+  } catch (e) {
+    alert("Couldn't copy automatically. Select and copy the list manually.");
+  }
+  document.body.removeChild(ta);
+}
+
+// Event delegation: "Add to List" buttons are rendered dynamically inside
+// #results and #nameResults, so listen on the whole document.
+document.addEventListener("click", (e) => {
+  const addBtn = e.target.closest(".add-list-btn");
+  if (addBtn) {
+    if (addBtn.classList.contains("added")) return;
+    addToMyList({
+      propertyId: addBtn.dataset.addPropertyId,
+      name: addBtn.dataset.addName,
+      city: addBtn.dataset.addCity,
+      state: addBtn.dataset.addState,
+      fhaRaw: addBtn.dataset.addFha,
+      score: addBtn.dataset.addScore,
+    });
+    return;
+  }
+  const removeBtn = e.target.closest(".mylist-remove-btn");
+  if (removeBtn) {
+    removeFromMyList(removeBtn.dataset.removePropertyId);
+  }
+});
+
+document.getElementById("myListCopyBtn").addEventListener("click", copyMyListForForm);
+document.getElementById("myListClearBtn").addEventListener("click", () => {
+  myList.clear();
+  renderMyList();
+  document.querySelectorAll(".add-list-btn.added").forEach(btn => {
+    btn.classList.remove("added");
+    btn.textContent = "+ Add to List";
+  });
+});
+
+renderMyList();
 
 let lastNameResults = [];
 
