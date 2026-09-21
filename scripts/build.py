@@ -23,6 +23,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -53,12 +54,36 @@ OUTPUT_PATH = ROOT / "docs" / "index.html"
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; fha-lookup-updater/1.0)"}
 
 
-def download(url: str, dest: Path) -> None:
+def download(url: str, dest: Path, retries: int = 4, backoff: float = 5.0) -> None:
+    """Downloads url to dest, retrying on transient connection failures
+    (dropped connections, incomplete reads) with exponential backoff.
+    Still fails loudly -- via the final raised exception -- if every
+    attempt fails, so a genuinely broken URL is still caught immediately
+    rather than retried forever.
+    """
     print(f"Downloading {url} -> {dest}")
-    resp = requests.get(url, headers=HEADERS, timeout=120)
-    resp.raise_for_status()
-    dest.write_bytes(resp.content)
-    print(f"  saved {len(resp.content):,} bytes")
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=120)
+            resp.raise_for_status()
+            content = resp.content
+            dest.write_bytes(content)
+            print(f"  saved {len(content):,} bytes (attempt {attempt}/{retries})")
+            return
+        except (
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as e:
+            last_exc = e
+            if attempt < retries:
+                wait = backoff * (2 ** (attempt - 1))
+                print(f"  attempt {attempt}/{retries} failed ({e.__class__.__name__}: {e}); retrying in {wait:.0f}s...")
+                time.sleep(wait)
+            else:
+                print(f"  attempt {attempt}/{retries} failed ({e.__class__.__name__}: {e}); giving up.")
+    raise last_exc
 
 
 def fetch_scores_as_of_date() -> str | None:
